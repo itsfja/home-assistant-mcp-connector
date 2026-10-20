@@ -1,9 +1,8 @@
-"""MCP server exposing Home Assistant tools to AI agents.
+"""MCP server exposing one Home Assistant instance to AI agents.
 
-Credentials are resolved per request in this order:
-1. Per-request headers: `X-Home-Assistant-Url` and the standard
-   `Authorization: Bearer <token>` (or `X-Home-Assistant-Token`).
-2. Environment variables `HA_URL` / `HA_TOKEN` (single-user local use).
+Single-user by design: the connector talks to exactly one Home
+Assistant instance, configured server-side via the `HA_URL` and
+`HA_TOKEN` environment variables. Requests carry no credentials.
 """
 
 from __future__ import annotations
@@ -28,8 +27,6 @@ mcp = MCPServer(
     ),
 )
 
-HA_URL_HEADER = "x-home-assistant-url"
-HA_TOKEN_HEADER = "x-home-assistant-token"
 HA_READ_ONLY_HEADER = "x-home-assistant-readonly"
 
 READ_ONLY_ENV = "HA_MCP_READ_ONLY"
@@ -83,29 +80,10 @@ def _require_actuation(ctx: Context) -> None:
         )
 
 
-def _client_from_headers(ctx: Context) -> HomeAssistantClient:
-    headers = ctx.headers or {}
-
-    def header_value(*names: str) -> str:
-        for name in names:
-            for key, value in headers.items():
-                if key.lower() == name:
-                    return value.strip()
-        return ""
-
-    base_url = header_value(HA_URL_HEADER)
-    token = header_value(HA_TOKEN_HEADER)
-    if not token:
-        auth = header_value("authorization")
-        if auth.lower().startswith("bearer "):
-            token = auth[7:].strip()
-
-    if not base_url:
-        base_url = os.environ.get("HA_URL", "")
-    if not token:
-        token = os.environ.get("HA_TOKEN", "")
+def _client() -> HomeAssistantClient:
+    base_url = os.environ.get("HA_URL", "")
+    token = os.environ.get("HA_TOKEN", "")
     verify_ssl = os.environ.get("HA_VERIFY_SSL", "true").lower() != "false"
-
     return HomeAssistantClient(base_url, token, verify_ssl)
 
 
@@ -124,7 +102,7 @@ async def list_entities(
             sensor, automation. Omit to list everything.
     """
     return [
-        _compact_entity(s) for s in _client_from_headers(ctx).get_states(domain)
+        _compact_entity(s) for s in _client().get_states(domain)
     ]
 
 
@@ -135,7 +113,7 @@ async def get_state(entity_id: str, ctx: Context = None) -> dict[str, Any]:
     Args:
         entity_id: Entity ID such as light.living_room.
     """
-    return _client_from_headers(ctx).get_state(entity_id)
+    return _client().get_state(entity_id)
 
 
 @mcp.tool()
@@ -153,7 +131,7 @@ async def call_service(
         data: Optional service payload, e.g. {"entity_id": "light.living_room"}.
     """
     _require_actuation(ctx)
-    return _client_from_headers(ctx).call_service(domain, service, data)
+    return _client().call_service(domain, service, data)
 
 
 @mcp.tool()
@@ -164,7 +142,7 @@ async def list_automations(ctx: Context = None) -> list[dict[str, Any]]:
     friendly_name. Use get_state for full details.
     """
     return [
-        _compact_entity(s) for s in _client_from_headers(ctx).get_automations()
+        _compact_entity(s) for s in _client().get_automations()
     ]
 
 
@@ -176,7 +154,7 @@ async def run_automation(entity_id: str, ctx: Context = None) -> Any:
         entity_id: Automation entity ID such as automation.good_morning.
     """
     _require_actuation(ctx)
-    return _client_from_headers(ctx).trigger_automation(entity_id)
+    return _client().trigger_automation(entity_id)
 
 
 def main() -> None:

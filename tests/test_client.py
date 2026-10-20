@@ -6,6 +6,9 @@ import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+os.environ["HA_URL"] = "http://127.0.0.1:8199"
+os.environ["HA_TOKEN"] = "test-token"
+
 STATES = [
     {"entity_id": "light.living_room", "state": "on", "attributes": {"brightness": 200}},
     {"entity_id": "switch.pump", "state": "off", "attributes": {}},
@@ -44,6 +47,11 @@ class MockHA(BaseHTTPRequestHandler):
         pass
 
 
+class FakeCtx:
+    def __init__(self, headers):
+        self.headers = headers
+
+
 def test_all():
     server = HTTPServer(("127.0.0.1", 8199), MockHA)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -68,18 +76,34 @@ def test_all():
             pass
 
         import ha_mcp.server as srv
-        from ha_mcp.server import _compact_entity
+        from ha_mcp.server import (
+            ReadOnlyError,
+            _client,
+            _compact_entity,
+            _is_read_only,
+            _require_actuation,
+        )
 
-        raw = STATES[0]
-        compact = _compact_entity(raw)
-        assert compact == {
-            "entity_id": "light.living_room",
-            "state": "on",
-            "friendly_name": "Living Room",  # not in mock attrs below -> check fallback
-        } or compact == {
-            "entity_id": "light.living_room",
-            "state": "on",
-        }, compact
+        # --- single-user client from env config ---
+        client = _client()
+        assert client.base_url == "http://127.0.0.1:8199", client.base_url
+        assert client.token == "test-token", client.token
+
+        url_backup = os.environ.pop("HA_URL")
+        try:
+            _client()
+            raise AssertionError("expected HomeAssistantError when HA_URL unset")
+        except HomeAssistantError:
+            pass
+        finally:
+            os.environ["HA_URL"] = url_backup
+
+        # --- compact summaries ---
+        compact = _compact_entity(STATES[0])
+        assert compact in (
+            {"entity_id": "light.living_room", "state": "on"},
+            {"entity_id": "light.living_room", "state": "on", "friendly_name": "Living Room"},
+        ), compact
         assert "attributes" not in compact
         assert "brightness" not in compact
 
@@ -91,12 +115,7 @@ def test_all():
         tools = {t.name for t in asyncio.run(srv.mcp.list_tools())}
         assert tools == {"list_entities", "get_state", "call_service", "list_automations", "run_automation"}, tools
 
-        from ha_mcp.server import ReadOnlyError, _is_read_only, _require_actuation
-
-        class FakeCtx:
-            def __init__(self, headers):
-                self.headers = headers
-
+        # --- read-only mode ---
         ctx_plain = FakeCtx({})
         ctx_true = FakeCtx({"X-Home-Assistant-ReadOnly": "true"})
         ctx_false = FakeCtx({"x-home-assistant-readonly": "false"})
