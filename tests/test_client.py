@@ -68,6 +68,26 @@ def test_all():
             pass
 
         import ha_mcp.server as srv
+        from ha_mcp.server import _compact_entity
+
+        raw = STATES[0]
+        compact = _compact_entity(raw)
+        assert compact == {
+            "entity_id": "light.living_room",
+            "state": "on",
+            "friendly_name": "Living Room",  # not in mock attrs below -> check fallback
+        } or compact == {
+            "entity_id": "light.living_room",
+            "state": "on",
+        }, compact
+        assert "attributes" not in compact
+        assert "brightness" not in compact
+
+        big_attrs = {f"k{i}": "x" * 100 for i in range(50)}
+        big_attrs["friendly_name"] = "Big Entity"
+        big = _compact_entity({"entity_id": "sensor.big", "state": "1", "attributes": big_attrs})
+        assert big == {"entity_id": "sensor.big", "state": "1", "friendly_name": "Big Entity"}
+
         tools = {t.name for t in asyncio.run(srv.mcp.list_tools())}
         assert tools == {"list_entities", "get_state", "call_service", "list_automations", "run_automation"}, tools
 
