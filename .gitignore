@@ -3,3 +3,11 @@ __pycache__/
 .env
 .venv/
 venv/
+ha_mcp.egg-info/
+*.egg-info/
+__pycache__/
+*.pyc
+.env
+.venv/
+build/
+dist/
