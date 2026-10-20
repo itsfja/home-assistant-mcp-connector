@@ -1,9 +1,9 @@
 """MCP server exposing Home Assistant tools to AI agents.
 
-Credentials are resolved per request in this order:
-1. Per-request headers: `X-Home-Assistant-Url` and the standard
-   `Authorization: Bearer <token>` (or `X-Home-Assistant-Token`).
-2. Environment variables `HA_URL` / `HA_TOKEN` (single-user local use).
+Credentials are required on every request (no process-wide fallback):
+1. `X-Home-Assistant-Url` + `X-Home-Assistant-Token` (or standard
+   `Authorization: Bearer <token>`), or
+2. both combined in `X-Home-Assistant-Connection: <url>|<token>`.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ mcp = MCPServer(
 
 HA_URL_HEADER = "x-home-assistant-url"
 HA_TOKEN_HEADER = "x-home-assistant-token"
+HA_CONNECTION_HEADER = "x-home-assistant-connection"
 HA_READ_ONLY_HEADER = "x-home-assistant-readonly"
 
 READ_ONLY_ENV = "HA_MCP_READ_ONLY"
@@ -100,10 +101,20 @@ def _client_from_headers(ctx: Context) -> HomeAssistantClient:
         if auth.lower().startswith("bearer "):
             token = auth[7:].strip()
 
-    if not base_url:
-        base_url = os.environ.get("HA_URL", "")
-    if not token:
-        token = os.environ.get("HA_TOKEN", "")
+    if not base_url or not token:
+        combined = header_value(HA_CONNECTION_HEADER)
+        if combined and "|" in combined:
+            combined_url, combined_token = combined.split("|", 1)
+            base_url = base_url or combined_url.strip()
+            token = token or combined_token.strip()
+
+    if not base_url or not token:
+        raise HomeAssistantError(
+            "Missing Home Assistant credentials. Provide the instance URL "
+            "and access token per request via the X-Home-Assistant-Url and "
+            "X-Home-Assistant-Token headers, or both combined in "
+            "X-Home-Assistant-Connection as '<url>|<token>'."
+        )
     verify_ssl = os.environ.get("HA_VERIFY_SSL", "true").lower() != "false"
 
     return HomeAssistantClient(base_url, token, verify_ssl)

@@ -28,21 +28,19 @@ single entity.
 
 ## Configuration
 
-The server resolves credentials **per request**, so one deployment can serve
-many users (multi-tenant). Each request may carry:
+The server requires credentials **on every request** (no process-wide
+fallback), so one deployment can serve many users (multi-tenant). Each
+request must carry either:
 
-| Header | Purpose |
+| Headers | Purpose |
 |---|---|
-| `X-Home-Assistant-Url` | Base URL of the user's Home Assistant instance |
-| `Authorization: Bearer <token>` (or `X-Home-Assistant-Token`) | Long-lived access token (HA profile → Security → Long-Lived Access Tokens) |
+| `X-Home-Assistant-Url` + `X-Home-Assistant-Token` (or `Authorization: Bearer <token>`) | Instance URL and long-lived access token (HA profile → Security → Long-Lived Access Tokens) |
+| `X-Home-Assistant-Connection: <url>|<token>` | Both combined — for credential UIs that expose a single per-user header slot |
 
-Environment variables are still supported as a fallback for local,
-single-user use:
+Requests without credentials fail with a clear error.
 
 | Variable | Required | Description |
 |---|---|---|
-| `HA_URL` | local fallback | Base URL when the request supplies no `X-Home-Assistant-Url` |
-| `HA_TOKEN` | local fallback | Token when the request supplies none |
 | `HA_VERIFY_SSL` | no | Set `false` for self-signed certs (default `true`) |
 | `HA_MCP_TRANSPORT` | no | `stdio` (default) or `http` |
 | `HA_MCP_HOST` / `HA_MCP_PORT` | no | HTTP bind address (default `0.0.0.0:8000`) |
@@ -68,14 +66,14 @@ Home Assistant instance. For multi-tenant deployments, do **not** set
 
 ```bash
 pip install -r requirements.txt
-HA_URL=http://localhost:8123 HA_TOKEN=xxx python -m ha_mcp.server
+python -m ha_mcp  # stdio; credentials arrive per request via headers
 ```
 
 By default the server speaks stdio (for local agent testing). For remote
 deployment use the streamable HTTP transport:
 
 ```bash
-HA_URL=... HA_TOKEN=... HA_MCP_TRANSPORT=http python -m ha_mcp.server
+HA_MCP_TRANSPORT=http python -m ha_mcp
 ```
 
 The streamable HTTP transport listens on `0.0.0.0:8000` by default in a
@@ -86,7 +84,7 @@ server behind TLS and an authenticating reverse proxy before exposing it.**
 
 ```bash
 docker build -t ha-mcp-connector .
-docker run --rm -p 8000:8000 -e HA_URL=... -e HA_TOKEN=... ha-mcp-connector
+docker run --rm -p 8000:8000 ha-mcp-connector
 ```
 
 ## Registering as a Mistral connector
@@ -98,7 +96,7 @@ Once the server is reachable over HTTPS:
 2. Suggested metadata (mirroring the existing Homey connector):
    - **name**: `home_assistant`
    - **protocol**: `mcp`
-   - **auth**: credential header `Authorization: Bearer <HA_TOKEN>`
+   - **auth**: per-user connection header `X-Home-Assistant-Connection: <url>|<token>`
    - **title**: `Home Assistant`
    - **description**: "Check and control your Home Assistant smart home
      devices, and trigger automations."

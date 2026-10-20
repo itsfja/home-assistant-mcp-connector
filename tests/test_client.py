@@ -44,6 +44,11 @@ class MockHA(BaseHTTPRequestHandler):
         pass
 
 
+class FakeCtx:
+    def __init__(self, headers):
+        self.headers = headers
+
+
 def test_all():
     server = HTTPServer(("127.0.0.1", 8199), MockHA)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -68,18 +73,20 @@ def test_all():
             pass
 
         import ha_mcp.server as srv
-        from ha_mcp.server import _compact_entity
+        from ha_mcp.server import (
+            ReadOnlyError,
+            _client_from_headers,
+            _compact_entity,
+            _is_read_only,
+            _require_actuation,
+        )
 
-        raw = STATES[0]
-        compact = _compact_entity(raw)
-        assert compact == {
-            "entity_id": "light.living_room",
-            "state": "on",
-            "friendly_name": "Living Room",  # not in mock attrs below -> check fallback
-        } or compact == {
-            "entity_id": "light.living_room",
-            "state": "on",
-        }, compact
+        # --- compact summaries ---
+        compact = _compact_entity(STATES[0])
+        assert compact in (
+            {"entity_id": "light.living_room", "state": "on"},
+            {"entity_id": "light.living_room", "state": "on", "friendly_name": "Living Room"},
+        ), compact
         assert "attributes" not in compact
         assert "brightness" not in compact
 
@@ -91,12 +98,34 @@ def test_all():
         tools = {t.name for t in asyncio.run(srv.mcp.list_tools())}
         assert tools == {"list_entities", "get_state", "call_service", "list_automations", "run_automation"}, tools
 
-        from ha_mcp.server import ReadOnlyError, _is_read_only, _require_actuation
+        # --- strict per-request credentials ---
+        os.environ["HA_URL"] = "http://env-should-be-ignored:8123"
+        os.environ["HA_TOKEN"] = "env-token-should-be-ignored"
 
-        class FakeCtx:
-            def __init__(self, headers):
-                self.headers = headers
+        ctx_combined = FakeCtx({"X-Home-Assistant-Connection": "http://127.0.0.1:8199|combined-token"})
+        client = _client_from_headers(ctx_combined)
+        assert client.base_url == "http://127.0.0.1:8199", client.base_url
+        assert client.token == "combined-token", client.token
 
+        try:
+            _client_from_headers(FakeCtx({}))
+            raise AssertionError("expected HomeAssistantError: env fallback must be gone")
+        except HomeAssistantError:
+            pass
+
+        try:
+            _client_from_headers(FakeCtx({"X-Home-Assistant-Url": "http://127.0.0.1:8199"}))
+            raise AssertionError("expected HomeAssistantError: URL without token")
+        except HomeAssistantError:
+            pass
+
+        ctx_separate = FakeCtx({
+            "X-Home-Assistant-Url": "http://127.0.0.1:8199",
+            "X-Home-Assistant-Token": "separate-token",
+        })
+        assert _client_from_headers(ctx_separate).token == "separate-token"
+
+        # --- read-only mode ---
         ctx_plain = FakeCtx({})
         ctx_true = FakeCtx({"X-Home-Assistant-ReadOnly": "true"})
         ctx_false = FakeCtx({"x-home-assistant-readonly": "false"})
@@ -123,6 +152,8 @@ def test_all():
         print("All client/tool tests passed.")
     finally:
         os.environ.pop("HA_MCP_READ_ONLY", None)
+        os.environ.pop("HA_URL", None)
+        os.environ.pop("HA_TOKEN", None)
         server.shutdown()
 
 
