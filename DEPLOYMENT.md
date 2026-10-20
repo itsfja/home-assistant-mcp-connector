@@ -184,19 +184,78 @@ systemctl enable --now cloudflared
 
 Since the connector serves one instance with server-side credentials and
 requests carry none, **the Access layer is the only thing stopping randos
-on the internet from driving your home.**
+on the internet from driving your home.** Configure it in this exact
+order; each step below was validated in a production deployment.
 
-1. Cloudflare dashboard → **Zero Trust** → Access → Applications →
-   Add a self-hosted app for `ha-mcp.yourdomain.com`
-   (first visit forces onboarding; the **Free** plan suffices)
-2. Policy: Allow → Include → your email (and/or a **Service Token** for the
-   Mistral platform, below)
-3. Access → **Service Auth** → Create Service Token → copy the
-   **Client ID** and **Client Secret** (secret shown once)
-4. Add the service token to the app's Allow policy
+### 6.1 Create the application
 
-Then the Mistral connector's connection header carries the pair:
+Cloudflare dashboard → **Zero Trust** → Access → Applications →
+Add an application → **Self-hosted and private** → **Public DNS**
+(first visit forces onboarding; the **Free** plan suffices):
+
+- **Name:** `ha-mcp`
+- **Public hostname:** subdomain `ha-mcp`, domain `yourdomain.com`,
+  **path empty** (an explicit `/` can behave differently from blank)
+
+### 6.2 Create the service token (for the Mistral platform)
+
+Access → **Service credentials → Service Tokens** → Create Service Token →
+copy the **Client ID** (ends in `.access`) and **Client Secret** (shown
+**once** — store it in a password manager immediately).
+
+### 6.3 Create the policies — and get the Action right
+
+This is the step that silently eats hours if done wrong.
+
+- **Token policy** (for the platform's machine calls):
+  Action **Service Auth** — *not* Allow — Include → Service Token →
+  select your token. Per Cloudflare's docs, anything else makes Access
+  prompt the caller for identity-provider login, which a machine cannot
+  do: every request 302s to the login page, no matter how correct the
+  credentials are.
+- **Email policy** (for you in a browser):
+  Action **Allow** → Include → Emails → your address. Login is one-time-PIN
+  to your inbox.
+
+### 6.4 Attach the policies to the application
+
+Policies are **reusable objects in a library** — creating one does nothing
+until it is **attached to the application**: open the `ha-mcp` app →
+Access policies → **Add existing policy** → select both. A policy showing
+"Used by applications: 0" is a red flag you have missed this step.
+
+Then the Mistral connector carries the pair as headers:
 `CF-Access-Client-Id: <id>` and `CF-Access-Client-Secret: <secret>`.
+
+### 6.5 The verification pair (do this before touching Mistral)
+
+From a machine with real curl (the Proxmox host works well):
+
+```bash
+# Bare request - must be 302 (the bouncer is on the door)
+curl -s -o /dev/null -w "%{http_code}" https://ha-mcp.yourdomain.com/mcp
+
+# Credentialed request - must be 200 (the token passes)
+curl -s -o /dev/null -w "%{http_code}" \
+  -H "CF-Access-Client-Id: <id>" -H "CF-Access-Client-Secret: <secret>" \
+  -X POST -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}' \
+  https://ha-mcp.yourdomain.com/mcp
+```
+
+Any other combination means a layer is misconfigured. Also useful: the
+token's **Last Seen** field in Service Auth ticks only when credentials
+actually match — "Not Seen Yet" after a credentialed probe means the pair
+never matched a token (wrong ID, dead token, or truncated secret).
+
+### 6.6 Header hygiene
+
+Exactly one space after the header colon. A stray double-space becomes
+part of the value and fails silently. When a credential has transited any
+chat, ticket, or screen-share, **rotate it**: Service Tokens → the token →
+three dots → Rotate secret (with a grace period so you can update
+consumers before the old secret dies).
 
 ## 7. Register in Mistral
 
@@ -207,7 +266,22 @@ Mistral platform → Connectors → **+ Add Connector** → **Add custom connect
 - **Authentication:** Custom → connection header
   `CF-Access-Client-Id: <value>`, and put `CF-Access-Client-Secret` in the
   advanced/global headers if the form supports it (see gotcha below)
-- Validate. A successful probe needs the server reachable AND past Access.
+- Validate. **Read this first:** the form probes the URL *before*
+  authentication is configured, and Access correctly blocks unauthenticated
+  probes — so validation fails while your security is working as designed.
+  Create the connector during a temporary **Bypass window**:
+
+  1. Zero Trust → Policies → create a reusable policy `temporary-bypass`,
+     **Action: Bypass**, Include: **Everyone**
+  2. Attach it to the `ha-mcp` app (Bypass evaluates first, so it wins)
+  3. Confirm with the bare curl from §6.5 — it must now return **400**
+  4. Immediately create the connector in Mistral — the probe passes
+  5. **Remove the bypass policy from the app** and confirm the bare curl
+     is 302 again
+  6. Delete the bypass policy from the library
+
+  The exposure window is a couple of minutes; the server answers anyone
+  in that window, so do not wander off mid-task.
 
 ### Gotchas
 
@@ -254,6 +328,14 @@ Every error below was hit for real during deployment; the fixes are verified.
 | Mistral probe: "server could not be reached at all" | placeholder URL, or Cloudflare 530/421 in the way | real hostname; fix tunnel and Host header first |
 | Connector registered but agent "can't find the tools" | session predates connector registration | start a new Vibe session |
 | `list_entities` returns ~1 MB of JSON | large instance, raw payload | already fixed: compact summaries; use `domain` filter |
+| Service-token request 302s forever; no audit entries; token "Not Seen Yet" | **policy Action is Allow, not Service Auth** — Access prompts machine callers for IdP login | set the token policy's Action to **Service Auth** (Cloudflare docs: "set the policy action to Service Auth; otherwise, Access will prompt for an identity provider login") |
+| Policy configured correctly but has no effect | reusable policy exists in the library but is **not attached to the app** | app → Access policies → **Add existing policy**; check "Used by applications" >= 1 |
+| Changed a policy but behavior unchanged | the edit was not saved (the Save control can sit below the fold) | scroll the full page; verify the change persisted after reload |
+| Mistral form: "server was reachable, but MCP initialization failed" | form probes pre-auth; Access blocks unauthenticated probes (working as designed) | create the connector during a temporary Bypass window (§7), then remove it |
+| Credentialed probe fails; Last Seen stays "Not Seen Yet" | pair doesn't match a token: wrong ID, disabled token, or truncated secret | compare the ID on the token's page character-for-character; rotate the secret if unsaved |
+| Token page shows "Associated applications: 0" | the policy referencing the token is not attached to any app | attach the policy to the app (§6.4) |
+| Deleting a service token is not offered | another object still references it | disable it instead — a disabled token cannot authenticate; delete later once unreferenced |
+
 
 ## Important notes
 
