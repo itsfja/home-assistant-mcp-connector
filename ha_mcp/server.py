@@ -14,6 +14,8 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.context import Context
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .client import HomeAssistantClient, HomeAssistantError
 
@@ -28,6 +30,39 @@ mcp = MCPServer(
 
 HA_URL_HEADER = "x-home-assistant-url"
 HA_TOKEN_HEADER = "x-home-assistant-token"
+HA_READ_ONLY_HEADER = "x-home-assistant-readonly"
+
+READ_ONLY_ENV = "HA_MCP_READ_ONLY"
+
+
+class ReadOnlyError(ToolError):
+    """Raised when actuation is attempted while read-only mode is active."""
+
+
+def _read_only_from_env() -> bool:
+    """Fail-closed: unparsable or unset values deny actuation."""
+    return os.environ.get(READ_ONLY_ENV, "true").strip().lower() not in ("false", "0", "no", "off")
+
+
+def _is_read_only(ctx: Context) -> bool:
+    """Per-request override wins over the environment; otherwise fail-closed."""
+    headers = ctx.headers or {}
+    override = ""
+    for key, value in headers.items():
+        if key.lower() == HA_READ_ONLY_HEADER:
+            override = value.strip()
+            break
+    if override:
+        return override.lower() not in ("false", "0", "no", "off")
+    return _read_only_from_env()
+
+
+def _require_actuation(ctx: Context) -> None:
+    if _is_read_only(ctx):
+        raise ReadOnlyError(
+            "This connector is in read-only mode; service calls and "
+            "automation triggers are disabled."
+        )
 
 
 def _client_from_headers(ctx: Context) -> HomeAssistantClient:
@@ -93,6 +128,7 @@ async def call_service(
         service: Service name, e.g. turn_on, turn_off, set_temperature.
         data: Optional service payload, e.g. {"entity_id": "light.living_room"}.
     """
+    _require_actuation(ctx)
     return _client_from_headers(ctx).call_service(domain, service, data)
 
 
@@ -109,6 +145,7 @@ async def run_automation(entity_id: str, ctx: Context = None) -> Any:
     Args:
         entity_id: Automation entity ID such as automation.good_morning.
     """
+    _require_actuation(ctx)
     return _client_from_headers(ctx).trigger_automation(entity_id)
 
 
@@ -117,7 +154,22 @@ def main() -> None:
     if transport == "http":
         host = os.environ.get("HA_MCP_HOST", "0.0.0.0")
         port = int(os.environ.get("HA_MCP_PORT", "8000"))
-        asyncio.run(mcp.run_streamable_http_async(host=host, port=port))
+        security: TransportSecuritySettings | None = None
+        allowed_hosts = [
+            h.strip()
+            for h in os.environ.get("HA_MCP_ALLOWED_HOSTS", "").split(",")
+            if h.strip()
+        ]
+        if allowed_hosts:
+            security = TransportSecuritySettings(
+                enable_dns_rebinding_protection=True,
+                allowed_hosts=allowed_hosts,
+            )
+        asyncio.run(
+            mcp.run_streamable_http_async(
+                host=host, port=port, transport_security=security
+            )
+        )
     else:
         mcp.run(transport="stdio")
 

@@ -40,6 +40,19 @@ single-user use:
 | `HA_VERIFY_SSL` | no | Set `false` for self-signed certs (default `true`) |
 | `HA_MCP_TRANSPORT` | no | `stdio` (default) or `http` |
 | `HA_MCP_HOST` / `HA_MCP_PORT` | no | HTTP bind address (default `0.0.0.0:8000`) |
+| `HA_MCP_READ_ONLY` | no | `true` (default) denies actuation; set `false` to allow service calls and automation triggers. Unparsable values fail closed to read-only. |
+
+### Read-only mode
+
+The connector **defaults to read-only**: `call_service` and `run_automation`
+refuse to run unless actuation is explicitly enabled. This makes pilot
+deployments safe by default — agents can discover and inspect the smart
+home but cannot actuate devices.
+
+- Enable actuation with `HA_MCP_READ_ONLY=false`.
+- A per-request `X-Home-Assistant-ReadOnly: true|false` header overrides the
+  environment setting (useful for per-user policies in multi-tenant setups).
+- Unparsable or missing values fail closed to read-only.
 
 **Never commit or log your token.** The token grants full control of your
 Home Assistant instance. For multi-tenant deployments, do **not** set
@@ -88,3 +101,5 @@ Once the server is reachable over HTTPS:
 After registration, tools appear under the connector (e.g.
 `home_assistant_list_entities`) and users enable it through the standard
 connector enablement flow.
+
+| `HA_MCP_ALLOWED_HOSTS` | no | Comma-separated Host header values permitted by the HTTP transport's DNS-rebinding protection when deployed behind a reverse proxy/tunnel (e.g. `ha-mcp.yourdomain.com`). Unset disables the Host check (loopback/local use). |
