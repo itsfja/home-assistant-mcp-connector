@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import requests
@@ -13,13 +12,26 @@ class HomeAssistantError(Exception):
 
 
 class HomeAssistantClient:
-    def __init__(self) -> None:
-        self.base_url = (os.environ.get("HA_URL") or "").rstrip("/")
-        self.token = os.environ.get("HA_TOKEN") or ""
-        self.verify_ssl = os.environ.get("HA_VERIFY_SSL", "true").lower() != "false"
+    """Per-request client bound to one user's Home Assistant instance.
+
+    Credentials come from the caller (per-request headers), never from
+    process-wide state, so a single server can serve many users.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        verify_ssl: bool = True,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.token = token
+        self.verify_ssl = verify_ssl
         if not self.base_url or not self.token:
-            raise RuntimeError(
-                "HA_URL and HA_TOKEN environment variables must be set."
+            raise HomeAssistantError(
+                "Missing Home Assistant credentials: provide the instance URL "
+                "and access token per request (or set HA_URL and HA_TOKEN for "
+                "local single-user use)."
             )
 
     def _headers(self) -> dict[str, str]:
@@ -40,7 +52,7 @@ class HomeAssistantClient:
             raise HomeAssistantError(f"Could not reach Home Assistant: {exc}") from exc
         if resp.status_code == 401:
             raise HomeAssistantError(
-                "Home Assistant rejected the token (401). Check HA_TOKEN."
+                "Home Assistant rejected the token (401). Check the access token."
             )
         if resp.status_code == 404:
             raise HomeAssistantError(f"Not found: {path}")
