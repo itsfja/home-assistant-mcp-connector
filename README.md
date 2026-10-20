@@ -101,3 +101,5 @@ Once the server is reachable over HTTPS:
 After registration, tools appear under the connector (e.g.
 `home_assistant_list_entities`) and users enable it through the standard
 connector enablement flow.
+
+| `HA_MCP_ALLOWED_HOSTS` | no | Comma-separated Host header values permitted by the HTTP transport's DNS-rebinding protection when deployed behind a reverse proxy/tunnel (e.g. `ha-mcp.yourdomain.com`). Unset disables the Host check (loopback/local use). |

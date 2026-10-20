@@ -15,6 +15,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .client import HomeAssistantClient, HomeAssistantError
 
@@ -153,7 +154,22 @@ def main() -> None:
     if transport == "http":
         host = os.environ.get("HA_MCP_HOST", "0.0.0.0")
         port = int(os.environ.get("HA_MCP_PORT", "8000"))
-        asyncio.run(mcp.run_streamable_http_async(host=host, port=port))
+        security: TransportSecuritySettings | None = None
+        allowed_hosts = [
+            h.strip()
+            for h in os.environ.get("HA_MCP_ALLOWED_HOSTS", "").split(",")
+            if h.strip()
+        ]
+        if allowed_hosts:
+            security = TransportSecuritySettings(
+                enable_dns_rebinding_protection=True,
+                allowed_hosts=allowed_hosts,
+            )
+        asyncio.run(
+            mcp.run_streamable_http_async(
+                host=host, port=port, transport_security=security
+            )
+        )
     else:
         mcp.run(transport="stdio")
 
