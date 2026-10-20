@@ -1,2 +1,0 @@
-[console_scripts]
-ha-mcp = ha_mcp.server:main
