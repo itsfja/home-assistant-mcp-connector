@@ -34,6 +34,24 @@ HA_READ_ONLY_HEADER = "x-home-assistant-readonly"
 
 READ_ONLY_ENV = "HA_MCP_READ_ONLY"
 
+COMPACT_ATTRIBUTE_KEYS = ("friendly_name", "unit_of_measurement")
+
+
+def _compact_entity(state: dict[str, Any]) -> dict[str, Any]:
+    """Slim an entity state to the fields an agent needs for discovery.
+
+    Full attributes remain available via get_state.
+    """
+    attributes = state.get("attributes") or {}
+    summary: dict[str, Any] = {
+        "entity_id": state.get("entity_id"),
+        "state": state.get("state"),
+    }
+    for key in COMPACT_ATTRIBUTE_KEYS:
+        if key in attributes:
+            summary[key] = attributes[key]
+    return summary
+
 
 class ReadOnlyError(ToolError):
     """Raised when actuation is attempted while read-only mode is active."""
@@ -97,11 +115,17 @@ async def list_entities(
 ) -> list[dict[str, Any]]:
     """List Home Assistant entities, optionally filtered by domain.
 
+    Returns a compact summary per entity: entity_id, state,
+    friendly_name, and unit_of_measurement. Use get_state for the full
+    attributes of any single entity.
+
     Args:
         domain: Optional domain filter such as light, switch, climate,
             sensor, automation. Omit to list everything.
     """
-    return _client_from_headers(ctx).get_states(domain)
+    return [
+        _compact_entity(s) for s in _client_from_headers(ctx).get_states(domain)
+    ]
 
 
 @mcp.tool()
@@ -134,8 +158,14 @@ async def call_service(
 
 @mcp.tool()
 async def list_automations(ctx: Context = None) -> list[dict[str, Any]]:
-    """List Home Assistant automations with their entity IDs and state."""
-    return _client_from_headers(ctx).get_automations()
+    """List Home Assistant automations with their entity IDs and state.
+
+    Returns a compact summary per automation: entity_id, state, and
+    friendly_name. Use get_state for full details.
+    """
+    return [
+        _compact_entity(s) for s in _client_from_headers(ctx).get_automations()
+    ]
 
 
 @mcp.tool()

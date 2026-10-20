@@ -10,7 +10,7 @@ only, never proactively.
 
 | Tool | Purpose |
 |---|---|
-| `list_entities` | List all entities, optionally filtered by domain |
+| `list_entities` | List entities (compact summaries), optionally filtered by domain |
 | `get_state` | Get current state and attributes of one entity |
 | `call_service` | Call any Home Assistant service (e.g. `light.turn_on`) |
 | `run_automation` | Trigger a Home Assistant automation |
@@ -19,6 +19,12 @@ only, never proactively.
 The tool surface is intentionally small and read-heavy. Actuation
 (`call_service`, `run_automation`) should only be invoked when the user
 explicitly asks for it.
+
+`list_entities` and `list_automations` return **compact summaries**
+(`entity_id`, `state`, `friendly_name`, `unit_of_measurement`) instead of the
+raw Home Assistant state payload — on large instances the raw payload can
+exceed a megabyte of JSON. Use `get_state` for the full attributes of any
+single entity.
 
 ## Configuration
 
