@@ -22,16 +22,28 @@ explicitly asks for it.
 
 ## Configuration
 
-The server is configured via environment variables:
+The server resolves credentials **per request**, so one deployment can serve
+many users (multi-tenant). Each request may carry:
+
+| Header | Purpose |
+|---|---|
+| `X-Home-Assistant-Url` | Base URL of the user's Home Assistant instance |
+| `Authorization: Bearer <token>` (or `X-Home-Assistant-Token`) | Long-lived access token (HA profile → Security → Long-Lived Access Tokens) |
+
+Environment variables are still supported as a fallback for local,
+single-user use:
 
 | Variable | Required | Description |
 |---|---|---|
-| `HA_URL` | yes | Base URL of the Home Assistant instance, e.g. `https://xxx.ui.nabu casa.app` or `http://homeassistant.local:8123` |
-| `HA_TOKEN` | yes | Long-lived access token (HA profile → Security → Long-Lived Access Tokens) |
+| `HA_URL` | local fallback | Base URL when the request supplies no `X-Home-Assistant-Url` |
+| `HA_TOKEN` | local fallback | Token when the request supplies none |
 | `HA_VERIFY_SSL` | no | Set `false` for self-signed certs (default `true`) |
+| `HA_MCP_TRANSPORT` | no | `stdio` (default) or `http` |
+| `HA_MCP_HOST` / `HA_MCP_PORT` | no | HTTP bind address (default `0.0.0.0:8000`) |
 
 **Never commit or log your token.** The token grants full control of your
-Home Assistant instance.
+Home Assistant instance. For multi-tenant deployments, do **not** set
+`HA_URL`/`HA_TOKEN` in the environment — require per-request headers instead.
 
 ## Local development
 

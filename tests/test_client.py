@@ -6,9 +6,6 @@ import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-os.environ["HA_URL"] = "http://127.0.0.1:8199"
-os.environ["HA_TOKEN"] = "test-token"
-
 STATES = [
     {"entity_id": "light.living_room", "state": "on", "attributes": {"brightness": 200}},
     {"entity_id": "switch.pump", "state": "off", "attributes": {}},
@@ -51,9 +48,9 @@ def test_all():
     server = HTTPServer(("127.0.0.1", 8199), MockHA)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        from ha_mcp.client import HomeAssistantClient
+        from ha_mcp.client import HomeAssistantClient, HomeAssistantError
 
-        c = HomeAssistantClient()
+        c = HomeAssistantClient("http://127.0.0.1:8199", "test-token")
         assert len(c.get_states()) == 3
         assert len(c.get_states("light")) == 1
         assert c.get_state("light.living_room")["state"] == "on"
@@ -63,6 +60,12 @@ def test_all():
         assert len(autos) == 1 and autos[0]["entity_id"] == "automation.good_morning"
         c.trigger_automation("automation.good_morning")
         assert CALLED[-1] == ("/api/services/automation/trigger", {"entity_id": "automation.good_morning"})
+
+        try:
+            HomeAssistantClient("", "")
+            raise AssertionError("expected HomeAssistantError for missing credentials")
+        except HomeAssistantError:
+            pass
 
         import ha_mcp.server as srv
         tools = {t.name for t in asyncio.run(srv.mcp.list_tools())}
