@@ -67,9 +67,14 @@ Home Assistant instance. For multi-tenant deployments, do **not** set
 ## Local development
 
 ```bash
-pip install -r requirements.txt
-HA_URL=http://localhost:8123 HA_TOKEN=xxx python -m ha_mcp.server
+python -m venv .venv
+.venv/bin/pip install -e .
+HA_URL=http://localhost:8123 HA_TOKEN=xxx python -m ha_mcp
 ```
+
+Installing the package (`pip install -e .`) puts `ha_mcp` on the import path
+and provides an `ha-mcp` console script, so the tests run directly:
+`python tests/test_client.py` (no `PYTHONPATH=.` workaround).
 
 By default the server speaks stdio (for local agent testing). For remote
 deployment use the streamable HTTP transport:
