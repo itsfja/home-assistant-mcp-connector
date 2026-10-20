@@ -70,8 +70,39 @@ def test_all():
         import ha_mcp.server as srv
         tools = {t.name for t in asyncio.run(srv.mcp.list_tools())}
         assert tools == {"list_entities", "get_state", "call_service", "list_automations", "run_automation"}, tools
+
+        from ha_mcp.server import ReadOnlyError, _is_read_only, _require_actuation
+
+        class FakeCtx:
+            def __init__(self, headers):
+                self.headers = headers
+
+        ctx_plain = FakeCtx({})
+        ctx_true = FakeCtx({"X-Home-Assistant-ReadOnly": "true"})
+        ctx_false = FakeCtx({"x-home-assistant-readonly": "false"})
+
+        os.environ.pop("HA_MCP_READ_ONLY", None)
+        assert _is_read_only(ctx_plain) is True, "default must be fail-closed read-only"
+        assert _is_read_only(ctx_true) is True
+        assert _is_read_only(ctx_false) is False
+
+        os.environ["HA_MCP_READ_ONLY"] = "not-a-bool"
+        assert _is_read_only(ctx_plain) is True, "unparsable value must fail closed"
+
+        os.environ["HA_MCP_READ_ONLY"] = "false"
+        assert _is_read_only(ctx_plain) is False
+        assert _is_read_only(ctx_true) is True, "per-request header must override env"
+
+        os.environ["HA_MCP_READ_ONLY"] = "true"
+        try:
+            _require_actuation(ctx_plain)
+            raise AssertionError("expected ReadOnlyError in read-only mode")
+        except ReadOnlyError:
+            pass
+
         print("All client/tool tests passed.")
     finally:
+        os.environ.pop("HA_MCP_READ_ONLY", None)
         server.shutdown()
 
 
